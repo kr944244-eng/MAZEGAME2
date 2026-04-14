@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Escape the Maze ULTIMATE</title>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial;
+            background: linear-gradient(135deg, #141e30, #243b55);
+            color: white;
+            text-align: center;
+        }
+
+        h1 { margin-top: 10px; }
+
+        .game-box {
+            width: 360px;
+            margin: auto;
+            padding: 15px;
+            border-radius: 15px;
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        #maze {
+            display: grid;
+            grid-template-columns: repeat(10, 30px);
+            gap: 4px;
+            margin: 15px auto;
+        }
+
+        .cell { width: 30px; height: 30px; border-radius: 5px; }
+        .wall { background: #111; }
+        .path { background: #ddd; }
+        .player { background: blue; }
+        .exit { background: lime; }
+        .enemy { background: red; }
+        .coin { background: gold; }
+        .hint { background: yellow; }
+
+        button {
+            margin: 5px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: none;
+            background: orange;
+            color: white;
+            cursor: pointer;
+        }
+
+        #leaderboard {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>🧩 Escape the Maze ULTIMATE</h1>
+
+<div class="game-box">
+    <div id="maze"></div>
+
+    <div id="info">Time: 0 | Score: 0</div>
+    <div id="message"></div>
+
+    <button onclick="showHint()">💡 Hint</button>
+    <button onclick="restart()">🔄 Restart</button>
+
+    <h3>🏆 Leaderboard</h3>
+    <div id="leaderboard"></div>
+</div>
+
+<script>
+let size = 10;
+let maze, player, exit, enemy;
+let time=0, score=0;
+let timer, enemyTimer;
+
+// sounds
+const moveSound = new Audio("https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg");
+const winSound = new Audio("https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg");
+const loseSound = new Audio("https://actions.google.com/sounds/v1/cartoon/boing.ogg");
+
+// 🧠 BFS PATHFINDING
+function bfs(start, target){
+    let queue=[[start.x,start.y]];
+    let visited=Array(size).fill().map(()=>Array(size).fill(false));
+    let parent={};
+
+    visited[start.x][start.y]=true;
+
+    let dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+
+    while(queue.length){
+        let [x,y]=queue.shift();
+
+        if(x===target.x && y===target.y){
+            let path=[];
+            let key=x+","+y;
+
+            while(parent[key]){
+                path.push(key);
+                key=parent[key];
+            }
+            return path.reverse();
+        }
+
+        for(let [dx,dy] of dirs){
+            let nx=x+dx, ny=y+dy;
+
+            if(nx>=0 && ny>=0 && nx<size && ny<size &&
+               !visited[nx][ny] && maze[nx][ny] !== '#'){
+
+                visited[nx][ny]=true;
+                parent[nx+","+ny]=x+","+y;
+                queue.push([nx,ny]);
+            }
+        }
+    }
+    return [];
+}
+
+// 🎲 RANDOM MAZE
+function generateMaze(){
+    maze=Array(size).fill().map(()=>Array(size).fill('#'));
+
+    function carve(x,y){
+        let dirs=[[0,2],[0,-2],[2,0],[-2,0]].sort(()=>Math.random()-0.5);
+
+        for(let [dx,dy] of dirs){
+            let nx=x+dx, ny=y+dy;
+
+            if(nx>0 && ny>0 && nx<size-1 && ny<size-1 && maze[nx][ny]=='#'){
+                maze[nx][ny]=' ';
+                maze[x+dx/2][y+dy/2]=' ';
+                carve(nx,ny);
+            }
+        }
+    }
+
+    maze[1][1]=' ';
+    carve(1,1);
+
+    player={x:1,y:1};
+
+    // reachable exit
+    for(let i=size-2;i>0;i--){
+        for(let j=size-2;j>0;j--){
+            if(maze[i][j]==' '){
+                exit={x:i,y:j};
+                i=0; break;
+            }
+        }
+    }
+
+    enemy={x:exit.x-1,y:exit.y};
+
+    // coins
+    for(let i=0;i<5;i++){
+        let x,y;
+        do{
+            x=Math.floor(Math.random()*size);
+            y=Math.floor(Math.random()*size);
+        }while(maze[x][y]!==' ');
+        maze[x][y]='C';
+    }
+
+    maze[player.x][player.y]='P';
+    maze[exit.x][exit.y]='E';
+    maze[enemy.x][enemy.y]='X';
+}
+
+// 🎨 DRAW
+function draw(){
+    let div=document.getElementById("maze");
+    div.innerHTML="";
+
+    maze.forEach(row=>{
+        row.forEach(cell=>{
+            let d=document.createElement("div");
+            d.classList.add("cell");
+
+            if(cell=='#') d.classList.add("wall");
+            else if(cell=='P') d.classList.add("player");
+            else if(cell=='E') d.classList.add("exit");
+            else if(cell=='X') d.classList.add("enemy");
+            else if(cell=='C') d.classList.add("coin");
+            else if(cell=='.') d.classList.add("hint");
+            else d.classList.add("path");
+
+            div.appendChild(d);
+        });
+    });
+
+    document.getElementById("info").innerText="Time: "+time+" | Score: "+score;
+}
+
+// 🎮 MOVE PLAYER
+function move(dx,dy){
+    let nx=player.x+dx, ny=player.y+dy;
+
+    if(maze[nx][ny]=='#') return;
+
+    moveSound.play();
+
+    if(maze[nx][ny]=='C') score+=100;
+
+    maze[player.x][player.y]=' ';
+    player.x=nx; player.y=ny;
+
+    if(nx==exit.x && ny==exit.y){
+        winSound.play();
+        score += 1000 - time*10;
+        saveScore(score);
+        document.getElementById("message").innerText="🎉 YOU WIN!";
+        clearInterval(timer);
+        clearInterval(enemyTimer);
+    }
+
+    maze[player.x][player.y]='P';
+    draw();
+}
+
+// 👾 SMART ENEMY
+function moveEnemy(){
+    maze[enemy.x][enemy.y]=' ';
+
+    let path=bfs(enemy,player);
+
+    if(path.length){
+        let [nx,ny]=path[0].split(",").map(Number);
+        enemy.x=nx; enemy.y=ny;
+    }
+
+    if(enemy.x==player.x && enemy.y==player.y){
+        loseSound.play();
+        document.getElementById("message").innerText="💀 CAUGHT!";
+        clearInterval(timer);
+        clearInterval(enemyTimer);
+    }
+
+    maze[enemy.x][enemy.y]='X';
+    draw();
+}
+
+// 💡 HINT
+function showHint(){
+    let path=bfs(player,exit);
+
+    path.forEach(p=>{
+        let [x,y]=p.split(",").map(Number);
+        if(maze[x][y]==' ') maze[x][y]='.';
+    });
+
+    draw();
+
+    setTimeout(()=>{
+        path.forEach(p=>{
+            let [x,y]=p.split(",").map(Number);
+            if(maze[x][y]=='.') maze[x][y]=' ';
+        });
+        draw();
+    },1000);
+}
+
+// ⌨️ CONTROLS
+document.addEventListener("keydown",e=>{
+    if(e.key=='w') move(-1,0);
+    if(e.key=='s') move(1,0);
+    if(e.key=='a') move(0,-1);
+    if(e.key=='d') move(0,1);
+});
+
+// 🏆 LEADERBOARD
+function saveScore(s){
+    let scores=JSON.parse(localStorage.getItem("mazeScores")||"[]");
+    scores.push(s);
+    scores.sort((a,b)=>b-a);
+    scores=scores.slice(0,5);
+    localStorage.setItem("mazeScores",JSON.stringify(scores));
+    showScores();
+}
+
+function showScores(){
+    let scores=JSON.parse(localStorage.getItem("mazeScores")||"[]");
+    document.getElementById("leaderboard").innerHTML=
+        scores.map(s=>"⭐ "+s).join("<br>");
+}
+
+// 🔄 RESTART
+function restart(){
+    time=0;
+    score=0;
+
+    generateMaze();
+    draw();
+
+    clearInterval(timer);
+    clearInterval(enemyTimer);
+
+    timer=setInterval(()=>{time++; draw();},1000);
+    enemyTimer=setInterval(moveEnemy,700);
+
+    showScores();
+    document.getElementById("message").innerText="";
+}
+
+// START
+restart();
+</script>
+
+</body>
+</html>
